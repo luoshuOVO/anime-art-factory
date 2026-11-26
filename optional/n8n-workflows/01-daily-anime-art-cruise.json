@@ -1,0 +1,58 @@
+{
+  "name": "每日二次元自动巡航出图（22:00 打包 L4 省 CU）",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 22 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-cruise-cron",
+      "name": "每晚 22:00 自动触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://art-factory:8096/api/cruise/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "node-cruise-http",
+      "name": "触发画图工坊晚班车",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "每晚 22:00 自动触发": {
+      "main": [
+        [
+          {
+            "node": "触发画图工坊晚班车",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Shanghai"
+  }
+}

@@ -1,0 +1,1174 @@
+{
+  "name": "动漫二次元自动搜图（40路广域热榜 + AI视觉严选≥8分）",
+  "active": false,
+  "nodes": [
+    {
+      "id": "n-sched",
+      "name": "每天 16:45 自动寻图",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "45 16 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n-manual",
+      "name": "手动立即找图",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        180
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n-rtok",
+      "name": "读取图床 Token",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        80
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/home/node/.n8n-files/curated-log/imgbed-hunter-token.txt",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      }
+    },
+    {
+      "id": "n-dtok",
+      "name": "解码图床 Token",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        420,
+        80
+      ],
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "token",
+        "options": {}
+      }
+    },
+    {
+      "id": "n-rstate",
+      "name": "读取去重账本",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        620,
+        80
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/home/node/.n8n-files/curated-log/mygo-wallpaper-seen.json",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      }
+    },
+    {
+      "id": "n-dstate",
+      "name": "解码去重账本",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        820,
+        80
+      ],
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "stateJson",
+        "options": {}
+      }
+    },
+    {
+      "id": "n-pub",
+      "name": "获取正式壁纸池",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://imgbed:8080/api/public/list?dir=wallpapers&count=500&fileType=image",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "n-pcfg",
+      "name": "获取图床页面配置",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://imgbed:8080/api/manage/sysConfig/page",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('解码图床 Token').first().json.token.trim() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "n-csync",
+      "name": "检查背景同步需求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        80
+      ],
+      "parameters": {
+        "jsCode": "const pub = $('获取正式壁纸池').first().json || {};\nconst cfg = $('获取图床页面配置').first().json || {};\nconst files = Array.isArray(pub.files) ? pub.files : [];\nconst urls = files\n  .map(f => '/file/' + String(f.name || '').split('/').map(encodeURIComponent).join('/'))\n  .filter(u => u.length > 6)\n  .sort();\n\nconst configList = Array.isArray(cfg.config) ? cfg.config : [];\nconst getVal = (id) => {\n  const it = configList.find(x => x.id === id);\n  return it ? String(it.value || '') : '';\n};\n\nconst targetJson = JSON.stringify(urls);\nconst needSync = urls.length > 0 && (\n  getVal('uploadBkImg') !== targetJson ||\n  getVal('loginBkImg') !== targetJson ||\n  getVal('adminBkImg') !== targetJson ||\n  getVal('adminLoginBkImg') !== targetJson\n);\n\nlet updatedPageConfig = null;\nif (needSync) {\n  const cloned = JSON.parse(JSON.stringify(cfg));\n  const overrides = {\n    wallpaperEnabled: true,\n    bkInterval: '45000',\n    bkOpacity: '0.95',\n    loginBkImg: targetJson,\n    uploadBkImg: targetJson,\n    adminLoginBkImg: targetJson,\n    adminBkImg: targetJson,\n  };\n  for (const item of cloned.config) {\n    if (Object.prototype.hasOwnProperty.call(overrides, item.id)) {\n      item.value = overrides[item.id];\n    }\n  }\n  updatedPageConfig = cloned;\n}\n\nreturn [{ json: { needSync, approvedCount: urls.length, updatedPageConfig } }];"
+      }
+    },
+    {
+      "id": "n-ifsync",
+      "name": "需要同步背景吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1620,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.needSync }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-dosync",
+      "name": "同步图床4端背景",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        -20
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "http://imgbed:8080/api/manage/sysConfig/page",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('解码图床 Token').first().json.token.trim() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updatedPageConfig) }}",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "n-inbox",
+      "name": "查询待审箱列表",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2060,
+        80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://imgbed:8080/api/manage/list?dir=wallpapers-inbox&count=-1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('解码图床 Token').first().json.token.trim() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "n-bquery",
+      "name": "生成多源乐队番搜图清单",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        80
+      ],
+      "parameters": {
+        "jsCode": "const inboxResp = $input.first().json || {};\nconst inboxFiles = Array.isArray(inboxResp.files) ? inboxResp.files : [];\nconst inboxCount = inboxFiles.length;\n\nlet state = { seenKeys: [], seenMd5: [], seenDims: [], pages: {}, rotWave: 0, lastRun: null };\ntry {\n  const raw = $('解码去重账本').first().json.stateJson || '';\n  if (raw.trim()) state = { ...state, ...JSON.parse(raw) };\n} catch (_) {}\nstate.pages = state.pages || {};\n\nconst MAX_INBOX = 200;\nconst DAILY_QUOTA = 24; // 8 rotated broad/themed channels * up to 3 curated masterpieces/day\nconst quota = inboxCount >= MAX_INBOX ? 0 : Math.min(DAILY_QUOTA, MAX_INBOX - inboxCount);\n\nconst WAVES = [\n  ['toplist_month', 'orig_girl', 'mygo', 'frieren', 'violet', 'miku', 'oshi', 'spyxfamily'],\n  ['toplist_year', 'style_dreamy', 'mujica', 'shinkai', 'arknights', 'fate', 'evangelion', 'genshin'],\n  ['toplist_all', 'style_cool', 'bocchi', 'bluearchive', 'starrail', 'wuthering', 'kimetsu', 'yurucamp'],\n  ['toplist_hot', 'style_school', 'bangdream', 'gbc', 'rezero', 'madoka', 'nier', 'zzz'],\n  ['orig_art', 'style_fantasy', 'lycoris', 'kon', 'euphonium', 'monogatari', 'azurlane', 'touhou'],\n];\n\nconst rawWave = Number(state.rotWave);\nconst waveIdx = Number.isFinite(rawWave) && rawWave >= 0 ? (rawWave % WAVES.length) : 0;\nconst activeSeries = WAVES[waveIdx];\n\nif (quota <= 0) {\n  return [{ json: { skipSearch: true, inboxFull: true, inboxCount, quota: 0, maxInbox: MAX_INBOX, waveIdx, totalWaves: WAVES.length, activeSeries } }];\n}\n\nconst getPage = (series, source) => {\n  const key = `${series}:${source}`;\n  const v = Number(state.pages[key]);\n  return Number.isFinite(v) && v >= 1 ? v : 1;\n};\n\nconst queries = [];\nconst metaBase = { skipSearch: false, quota, inboxCount, maxInbox: MAX_INBOX, waveIdx, totalWaves: WAVES.length, activeSeries };\n\nconst addWH = (series, q, sorting = 'favorites', extra = '') => {\n  const p = getPage(series, 'wallhaven');\n  const qPart = q ? `q=${encodeURIComponent(q)}&` : '';\n  queries.push({\n    json: {\n      ...metaBase, series, source: 'wallhaven',\n      url: `https://wallhaven.cc/api/v1/search?${qPart}categories=010&purity=100&sorting=${sorting}${extra}&page=${p}`,\n    }\n  });\n};\nconst addKC = (series, tag) => {\n  const p = getPage(series, 'konachan');\n  queries.push({\n    json: {\n      ...metaBase, series, source: 'konachan',\n      url: `https://konachan.net/post.json?tags=${encodeURIComponent(tag + ' rating:s')}&limit=40&page=${p}`,\n    }\n  });\n};\nconst addYD = (series, tag) => {\n  const p = getPage(series, 'yandere');\n  queries.push({\n    json: {\n      ...metaBase, series, source: 'yandere',\n      url: `https://yande.re/post.json?tags=${encodeURIComponent(tag + ' rating:s')}&limit=40&page=${p}`,\n    }\n  });\n};\n\nconst CATALOG = {\n  // === 广域全站热榜与多风格二次元人物（不限番剧，全网收纳神图）===\n  toplist_month: () => {\n    addWH('toplist_month', 'anime girl', 'toplist', '&topRange=1M');\n    addWH('toplist_month', '', 'toplist', '&topRange=1M');\n    addKC('toplist_month', 'order:score');\n    addYD('toplist_month', 'order:score');\n  },\n  toplist_year: () => {\n    addWH('toplist_year', 'anime girl', 'toplist', '&topRange=1y');\n    addKC('toplist_year', 'long_hair order:score');\n    addYD('toplist_year', 'dress order:score');\n  },\n  toplist_all: () => {\n    addWH('toplist_all', 'anime girl', 'favorites');\n    addKC('toplist_all', 'ribbon order:score');\n    addYD('toplist_all', 'dress order:score');\n  },\n  toplist_hot: () => {\n    addWH('toplist_hot', 'anime illustration', 'views');\n    addKC('toplist_hot', 'japanese_clothes order:score');\n    addYD('toplist_hot', 'kimono order:score');\n  },\n  orig_girl: () => {\n    addWH('orig_girl', 'original anime girl', 'favorites');\n    addKC('orig_girl', 'original order:score');\n    addYD('orig_girl', 'seifuku order:score');\n  },\n  orig_art: () => {\n    addWH('orig_art', 'anime art', 'toplist', '&topRange=6M');\n    addKC('orig_art', 'original dress order:score');\n    addYD('orig_art', 'flowers order:score');\n  },\n  style_dreamy: () => {\n    addWH('style_dreamy', 'anime girl flowers', 'favorites');\n    addWH('style_dreamy', 'anime girl aesthetic', 'favorites');\n    addKC('style_dreamy', 'flowers order:score');\n    addYD('style_dreamy', 'flowers order:score');\n  },\n  style_cool: () => {\n    addWH('style_cool', 'cyberpunk anime girl', 'favorites');\n    addWH('style_cool', 'anime girl sword', 'favorites');\n    addKC('style_cool', 'weapon order:score');\n    addYD('style_cool', 'weapon order:score');\n  },\n  style_school: () => {\n    addWH('style_school', 'anime school girl sunset', 'favorites');\n    addKC('style_school', 'school_uniform order:score');\n    addYD('style_school', 'seifuku order:score');\n  },\n  style_fantasy: () => {\n    addWH('style_fantasy', 'fantasy anime girl', 'favorites');\n    addKC('style_fantasy', 'dress order:score');\n    addYD('style_fantasy', 'wings order:score');\n  },\n\n  // === 人气动漫 / 二游 / 歌姬常驻保底池 ===\n  mygo: () => {\n    addWH('mygo', 'mygo');\n    addWH('mygo', 'takamatsu tomori');\n    addKC('mygo', 'takamatsu_tomori');\n    addKC('mygo', 'nagasaki_soyo');\n    addYD('mygo', \"bang_dream!_it's_mygo!!!!!\");\n  },\n  frieren: () => {\n    addWH('frieren', 'frieren');\n    addKC('frieren', 'sousou_no_frieren order:score');\n    addYD('frieren', 'sousou_no_frieren order:score');\n  },\n  violet: () => {\n    addWH('violet', 'violet evergarden');\n    addKC('violet', 'violet_evergarden order:score');\n    addYD('violet', 'violet_evergarden');\n  },\n  miku: () => {\n    addWH('miku', 'hatsune miku');\n    addKC('miku', 'hatsune_miku order:score');\n    addYD('miku', 'hatsune_miku order:score');\n  },\n  oshi: () => {\n    addWH('oshi', 'oshi no ko');\n    addWH('oshi', 'hoshino ai');\n    addKC('oshi', 'oshi_no_ko order:score');\n    addYD('oshi', 'oshi_no_ko order:score');\n  },\n  spyxfamily: () => {\n    addWH('spyxfamily', 'spy x family');\n    addKC('spyxfamily', 'spy_x_family order:score');\n    addYD('spyxfamily', 'spy_x_family');\n  },\n  mujica: () => {\n    addWH('mujica', 'ave mujica');\n    addWH('mujica', 'togawa sakiko');\n    addKC('mujica', 'togawa_sakiko');\n    addKC('mujica', 'wakaba_mutsumi');\n    addYD('mujica', 'bang_dream!_ave_mujica');\n  },\n  shinkai: () => {\n    addWH('shinkai', 'kimi no na wa');\n    addKC('shinkai', 'kimi_no_na_wa order:score');\n    addKC('shinkai', 'tenki_no_ko order:score');\n    addYD('shinkai', 'suzume_no_tojimari');\n  },\n  arknights: () => {\n    addWH('arknights', 'arknights');\n    addKC('arknights', 'arknights order:score');\n    addYD('arknights', 'arknights order:score');\n  },\n  fate: () => {\n    addWH('fate', 'fate stay night');\n    addWH('fate', 'fate grand order');\n    addKC('fate', 'fate/stay_night order:score');\n    addKC('fate', 'fate/grand_order order:score');\n    addYD('fate', 'fate/stay_night order:score');\n  },\n  evangelion: () => {\n    addWH('evangelion', 'evangelion');\n    addWH('evangelion', 'asuka langley');\n    addKC('evangelion', 'neon_genesis_evangelion order:score');\n    addYD('evangelion', 'neon_genesis_evangelion order:score');\n  },\n  genshin: () => {\n    addWH('genshin', 'genshin impact');\n    addKC('genshin', 'genshin_impact order:score');\n    addYD('genshin', 'genshin_impact order:score');\n  },\n  bocchi: () => {\n    addWH('bocchi', 'bocchi the rock');\n    addKC('bocchi', 'bocchi_the_rock! order:score');\n    addYD('bocchi', 'bocchi_the_rock!');\n  },\n  bluearchive: () => {\n    addWH('bluearchive', 'blue archive');\n    addKC('bluearchive', 'blue_archive order:score');\n    addYD('bluearchive', 'blue_archive order:score');\n  },\n  starrail: () => {\n    addWH('starrail', 'honkai star rail');\n    addKC('starrail', 'honkai:_star_rail order:score');\n    addYD('starrail', 'honkai:_star_rail');\n  },\n  wuthering: () => {\n    addWH('wuthering', 'wuthering waves');\n    addKC('wuthering', 'wuthering_waves order:score');\n    addYD('wuthering', 'wuthering_waves');\n  },\n  kimetsu: () => {\n    addWH('kimetsu', 'kimetsu no yaiba');\n    addKC('kimetsu', 'kimetsu_no_yaiba order:score');\n    addYD('kimetsu', 'kimetsu_no_yaiba');\n  },\n  yurucamp: () => {\n    addWH('yurucamp', 'yuru camp');\n    addKC('yurucamp', 'yuru_camp order:score');\n    addYD('yurucamp', 'yuru_camp');\n  },\n  bangdream: () => {\n    addWH('bangdream', 'bang dream');\n    addKC('bangdream', 'bang_dream! order:score');\n    addYD('bangdream', 'bang_dream!');\n  },\n  gbc: () => {\n    addWH('gbc', 'girls band cry');\n    addWH('gbc', 'iseri nina');\n    addKC('gbc', 'girls_band_cry');\n    addYD('gbc', 'girls_band_cry');\n  },\n  rezero: () => {\n    addWH('rezero', 're zero');\n    addKC('rezero', 're:zero_kara_hajimeru_isekai_seikatsu order:score');\n    addYD('rezero', 're:zero_kara_hajimeru_isekai_seikatsu');\n  },\n  madoka: () => {\n    addWH('madoka', 'madoka magica');\n    addKC('madoka', 'mahou_shoujo_madoka_magica order:score');\n    addYD('madoka', 'mahou_shoujo_madoka_magica');\n  },\n  nier: () => {\n    addWH('nier', 'nier automata');\n    addKC('nier', 'nier:_automata order:score');\n    addYD('nier', 'nier:_automata order:score');\n  },\n  zzz: () => {\n    addWH('zzz', 'zenless zone zero');\n    addKC('zzz', 'zenless_zone_zero');\n    addYD('zzz', 'zenless_zone_zero');\n  },\n  lycoris: () => {\n    addWH('lycoris', 'lycoris recoil');\n    addKC('lycoris', 'lycoris_recoil order:score');\n    addYD('lycoris', 'lycoris_recoil');\n  },\n  kon: () => {\n    addWH('kon', 'k-on');\n    addKC('kon', 'k-on! order:score');\n    addYD('kon', 'k-on! order:score');\n  },\n  euphonium: () => {\n    addWH('euphonium', 'hibike euphonium');\n    addKC('euphonium', 'hibike!_euphonium order:score');\n    addYD('euphonium', 'hibike!_euphonium');\n  },\n  monogatari: () => {\n    addWH('monogatari', 'monogatari series');\n    addKC('monogatari', 'bakemonogatari order:score');\n    addYD('monogatari', 'bakemonogatari');\n  },\n  azurlane: () => {\n    addWH('azurlane', 'azur lane');\n    addKC('azurlane', 'azur_lane order:score');\n    addYD('azurlane', 'azur_lane order:score');\n  },\n  touhou: () => {\n    addWH('touhou', 'touhou');\n    addKC('touhou', 'touhou order:score');\n    addYD('touhou', 'touhou order:score');\n  },\n};\n\nfor (const se of activeSeries) {\n  if (CATALOG[se]) CATALOG[se]();\n}\n\nreturn queries;"
+      }
+    },
+    {
+      "id": "n-ifsearch",
+      "name": "需要抓新图吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2460,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ !$json.skipSearch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-fetch",
+      "name": "抓取3路高赞图源",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2680,
+        0
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 4,
+              "batchInterval": 350
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n-pre",
+      "name": "社区高赞硬质检与去重",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        0
+      ],
+      "parameters": {
+        "jsCode": "let state = { seenKeys: [], seenMd5: [], seenDims: [], pages: {} };\ntry {\n  const raw = $('解码去重账本').first().json.stateJson || '';\n  if (raw.trim()) state = { ...state, ...JSON.parse(raw) };\n} catch (_) {}\n\nconst seenKeys = new Set(state.seenKeys || []);\nconst seenMd5 = new Set(state.seenMd5 || []);\nconst seenDims = new Set(state.seenDims || []);\n\nconst STD_DIMS = new Set(['1920x1080','1920x1200','2560x1440','2560x1600','2560x1080','3440x1440','3840x2160','3840x2400','5120x2880']);\nconst dimKey = (w, h) => {\n  const d = `${w}x${h}`;\n  return STD_DIMS.has(d) ? '' : d;\n};\n\ntry {\n  const inboxFiles = $('查询待审箱列表').first().json.files || [];\n  for (const f of inboxFiles) {\n    const fn = String(f.name || '').split('/').pop() || '';\n    const m = fn.match(/(wallhaven|konachan|yandere)_([a-zA-Z0-9]+)_(\\d+x\\d+)\\./);\n    if (m) {\n      seenKeys.add(`${m[1]}:${m[2]}`);\n      if (!STD_DIMS.has(m[3])) seenDims.add(m[3]);\n    }\n  }\n} catch (_) {}\n\nconst queries = $('需要抓新图吗').all();\nconst responses = $input.all();\nconst q0 = queries[0]?.json || {};\nconst quota = Number(q0.quota || 20);\nconst activeSeries = Array.isArray(q0.activeSeries) && q0.activeSeries.length\n  ? q0.activeSeries\n  : Array.from(new Set(queries.map(x => x.json?.series).filter(Boolean)));\n\nconst BAD_TAGS = /\\b(sketch|lineart|monochrome|greyscale|grayscale|comic|4koma|2koma|manga|speech_bubble|character_sheet|reference_sheet|meme|screenshot|screencap|lowres|ai_generated|ai-generated|nsfw|nude|nipples|pussy|penis|sex|hentai|explicit|questionable|pixel_art|chibi|multiple_views|split_screen|collage|unfinished|wip|watermark|cosplay|photo|real_life|simple_background|white_background|transparent_background|upside-down|upside_down|magazine_scan|calendar|cd_cover|bd_cover|dvd_cover|swimsuit|bikini|lingerie|underwear|panties|cleavage|no_humans|nobody|scenery|landscape|still_life|background_only|architecture|nature)\\b/i;\n\nconst HIGH_VOL_SERIES = new Set(['toplist_month', 'toplist_year', 'toplist_all', 'toplist_hot', 'orig_girl', 'orig_art', 'style_dreamy', 'style_cool', 'style_school', 'style_fantasy', 'oshi', 'evangelion', 'nier', 'wuthering', 'miku', 'genshin', 'arknights', 'bluearchive', 'touhou', 'azurlane', 'fate']);\nconst SOURCE_ORDER = ['wallhaven', 'konachan', 'yandere'];\n\nconst buckets = {};\nfor (const se of activeSeries) {\n  buckets[se] = { wallhaven: [], konachan: [], yandere: [] };\n}\n\nconst batchKeys = new Set();\nconst batchMd5 = new Set();\nconst batchDims = new Set();\n\nfunction acceptCandidate(c) {\n  if (!c.downloadUrl || !c.thumbUrl || !c.key) return;\n  if (seenKeys.has(c.key) || batchKeys.has(c.key)) return;\n  if (c.md5 && (seenMd5.has(c.md5) || batchMd5.has(c.md5))) return;\n  const dk = dimKey(c.origW || c.w, c.origH || c.h);\n  if (dk && (seenDims.has(dk) || batchDims.has(dk))) return;\n  const longSide = Math.max(c.w, c.h);\n  const shortSide = Math.min(c.w, c.h);\n  if (longSide < 1400 || shortSide < 900) return;\n  const ratio = c.w / c.h;\n  if (ratio < 0.45 || ratio > 2.45) return;\n  if (c.tags && BAD_TAGS.test(c.tags)) return;\n  if (c.fileSize && c.fileSize > 15 * 1024 * 1024) return;\n  c.dimKey = dk;\n  batchKeys.add(c.key);\n  if (c.md5) batchMd5.add(c.md5);\n  if (dk) batchDims.add(dk);\n  buckets[c.series][c.source].push(c);\n}\n\nfor (let i = 0; i < Math.min(queries.length, responses.length); i++) {\n  const q = queries[i].json || {};\n  const series = q.series;\n  const src = q.source;\n  const resObj = responses[i].json || {};\n  if (resObj.statusCode && resObj.statusCode >= 400) continue;\n  let body = resObj.body !== undefined ? resObj.body : resObj;\n  if (typeof body === 'string') {\n    try { body = JSON.parse(body); } catch (_) { continue; }\n  }\n  if (!body || !buckets[series] || !buckets[series][src]) continue;\n\n  const isHighVol = HIGH_VOL_SERIES.has(series);\n\n  if (src === 'wallhaven') {\n    const arr = Array.isArray(body.data) ? body.data : [];\n    const minFav = isHighVol ? 35 : 10;\n    for (const p of arr) {\n      if (p.purity !== 'sfw') continue;\n      if (Number(p.favorites || 0) < minFav) continue;\n      acceptCandidate({\n        series, source: 'wallhaven',\n        id: String(p.id || ''),\n        key: `wallhaven:${p.id}`,\n        md5: '',\n        w: Number(p.dimension_x || 0),\n        h: Number(p.dimension_y || 0),\n        origW: Number(p.dimension_x || 0),\n        origH: Number(p.dimension_y || 0),\n        communityScore: Number(p.favorites || 0),\n        fileSize: Number(p.file_size || 0),\n        tags: '',\n        thumbUrl: String(p.thumbs?.small || p.thumbs?.large || ''),\n        downloadUrl: String(p.path || ''),\n      });\n    }\n  } else if (src === 'konachan' || src === 'yandere') {\n    const arr = Array.isArray(body) ? body : [];\n    const minScore = isHighVol\n      ? (src === 'yandere' ? 20 : 15)\n      : (src === 'yandere' ? 8 : 8);\n    for (const p of arr) {\n      if (p.rating !== 's') continue;\n      if (Number(p.score || 0) < minScore) continue;\n      const origW = Number(p.width || 0);\n      const origH = Number(p.height || 0);\n      const origSize = Number(p.file_size || 0);\n      const sampleW = Number(p.sample_width || 0);\n      const sampleH = Number(p.sample_height || 0);\n      const useSample = origSize > 5 * 1024 * 1024 && p.sample_url && Math.max(sampleW, sampleH) >= 1400 && Math.min(sampleW, sampleH) >= 900;\n      acceptCandidate({\n        series, source: src,\n        id: String(p.id || ''),\n        key: `${src}:${p.id}`,\n        md5: String(p.md5 || '').toLowerCase(),\n        w: useSample ? sampleW : origW,\n        h: useSample ? sampleH : origH,\n        origW, origH,\n        communityScore: Number(p.score || 0),\n        fileSize: useSample ? Number(p.sample_file_size || 0) : origSize,\n        tags: String(p.tags || ''),\n        thumbUrl: String(p.preview_url || ''),\n        downloadUrl: String(useSample ? p.sample_url : (p.file_url || '')),\n      });\n    }\n  }\n}\n\nconst shortlist = [];\nconst bucketSizes = {};\nfor (const se of activeSeries) {\n  for (const so of SOURCE_ORDER) {\n    buckets[se][so].sort((a, b) => (b.communityScore - a.communityScore) || ((b.w * b.h) - (a.w * a.h)));\n    bucketSizes[`${se}:${so}`] = buckets[se][so].length;\n  }\n  const picked = [];\n  const idx = { wallhaven: 0, konachan: 0, yandere: 0 };\n  while (picked.length < 6) {\n    let moved = false;\n    for (const so of SOURCE_ORDER) {\n      if (picked.length >= 6) break;\n      if (idx[so] < buckets[se][so].length) {\n        picked.push(buckets[se][so][idx[so]++]);\n        moved = true;\n      }\n    }\n    if (!moved) break;\n  }\n  for (const item of picked) shortlist.push(item);\n}\n\nif (shortlist.length === 0) {\n  return [{ json: { noCandidates: true, bucketSizes, quota, activeSeries } }];\n}\n\nreturn shortlist.map(item => ({\n  json: { ...item, noCandidates: false, bucketSizes, quota, activeSeries }\n}));"
+      }
+    },
+    {
+      "id": "n-ifcands",
+      "name": "有候选图吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ !$json.noCandidates }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-dlthumb",
+      "name": "下载小缩略图供AI评审",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3320,
+        -60
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.thumbUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "thumb"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 200
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n-vpack",
+      "name": "按系列组装AI视觉评审包",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        -60
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst groups = {};\n\nfor (let i = 0; i < items.length; i++) {\n  const it = items[i];\n  const bin = it.binary && it.binary.thumb;\n  if (!bin) continue;\n  let buf;\n  try {\n    buf = await this.helpers.getBinaryDataBuffer(i, 'thumb');\n  } catch (_) {\n    continue;\n  }\n  if (!buf || buf.length < 1500) continue;\n  const mime = String(bin.mimeType || 'image/jpeg').startsWith('image/') ? bin.mimeType : 'image/jpeg';\n  const se = it.json.series || 'original';\n  if (!groups[se]) groups[se] = [];\n  groups[se].push({\n    ...it.json,\n    b64: buf.toString('base64'),\n    thumbMime: mime,\n  });\n}\n\nconst seriesNames = {\n  toplist_month: '全站二次元近月高赞热榜',\n  toplist_year: '全站二次元年度高赞榜',\n  toplist_all: '全站二次元殿堂收藏榜',\n  toplist_hot: '全站二次元人气热图与和风精绘',\n  orig_girl: '全站原创二次元精致少女插画',\n  orig_art: '全站原创画师大师精绘',\n  style_dreamy: '唯美光影 / 花海氛围二次元人物',\n  style_cool: '酷飒炫酷 / 赛博战斗二次元人物',\n  style_school: '青春校园 / 治愈日常二次元人物',\n  style_fantasy: '奇幻华服 / 魔法大场景二次元人物',\n  mygo: 'BanG Dream! It\\'s MyGO!!!!!',\n  mujica: 'BanG Dream! Ave Mujica',\n  bangdream: 'BanG Dream! 邦邦全系列',\n  bocchi: '孤独摇滚！',\n  gbc: 'Girls Band Cry',\n  lycoris: '莉可丽丝 Lycoris Recoil',\n  frieren: '葬送的芙莉莲',\n  violet: '紫罗兰永恒花园',\n  shinkai: '新海诚系列人物名场面',\n  kon: '轻音少女 K-ON!',\n  euphonium: '吹响！上低音号',\n  fate: 'Fate 系列',\n  monogatari: '物语系列',\n  kimetsu: '鬼灭之刃',\n  spyxfamily: '间谍过家家',\n  rezero: 'Re:从零开始的异世界生活',\n  madoka: '魔法少女小圆',\n  oshi: '我推的孩子',\n  evangelion: '新世纪福音战士 EVA',\n  yurucamp: '摇曳露营',\n  nier: '尼尔：机械纪元',\n  miku: '初音未来 Hatsune Miku',\n  arknights: '明日方舟',\n  bluearchive: '蔚蓝档案',\n  genshin: '原神',\n  starrail: '崩坏：星穹铁道',\n  wuthering: '鸣潮 Wuthering Waves',\n  touhou: '东方Project',\n  azurlane: '碧蓝航线',\n  zzz: '绝区零',\n};\n\nconst out = [];\nfor (const [series, list] of Object.entries(groups)) {\n  if (!list.length) continue;\n  const content = [{\n    type: 'text',\n    text: `你是资深动漫二次元自动搜图审美评审（入选图片涵盖高清插画收藏、人物立绘、壁纸挑选与 AI 魔改生图参考，横图竖图方图一视同仁）。\\n下方给出「${seriesNames[series] || series}」的 ${list.length} 张候选二次元插画缩略图（含横图、竖图、方图）（编号 0 到 ${list.length - 1}）。\\n请按高审美标准严格打分（1-10分），宁缺毋滥：\\n- 8-10分（keep=true）：一眼惊艳好看的精品动漫/二次元插画、角色立绘或壁纸（横竖方图不限）！硬性前提：画面中必须有清晰、完整的二次元动漫人物作为视觉主体（单人或多人皆可）；风格不限——帅气炫酷、漂亮精致、光影绚丽、氛围大气，或温馨治愈都很加分；要求构图完整、画工精良、视觉舒适耐看。\\n- 1-7分（keep=false）：直接淘汰——任何纯风景/纯空景/建筑/静物/无人物画面，或人物极小看不清的纯景图（一票否决直接给≤4分）、普通番剧动画截图、纯白/大片单调空白底、人物大头贴或裁切残缺、倒置/奇怪视角、大段文字/杂志封面/水印边框、画面杂乱刺眼、低俗擦边暴露。\\n- 视觉去重：如果这批里出现两张画面相同或高度相似的重复图，只保留最清晰的一张，另一张必须 keep=false 并在 reason 注明重复。\\n- 最多挑选 3 张最优秀的图设为 keep=true。\\n严格只输出纯 JSON 数组，不要任何 Markdown 代码块或多余文字：[{\"idx\":0,\"score\":9,\"keep\":true,\"reason\":\"12字以内中文理由\"}]`\n  }];\n\n  const metaList = [];\n  list.forEach((c, idx) => {\n    content.push({ type: 'text', text: `图 ${idx}（${c.source}，${c.w}x${c.h}，社区热度 ${c.communityScore}）` });\n    content.push({ type: 'image_url', image_url: { url: `data:${c.thumbMime};base64,${c.b64}` } });\n    metaList.push({\n      idx,\n      series: c.series,\n      source: c.source,\n      id: c.id,\n      key: c.key,\n      md5: c.md5 || '',\n      dimKey: c.dimKey || '',\n      w: c.w,\n      h: c.h,\n      communityScore: c.communityScore,\n      downloadUrl: c.downloadUrl,\n      bucketSizes: c.bucketSizes,\n      quota: c.quota,\n    });\n  });\n\n  out.push({\n    json: {\n      series,\n      candidates: metaList,\n      bucketSizes: list[0].bucketSizes,\n      quota: list[0].quota,\n      magpiePayload: {\n        model: 'YOUR_VISION_MODEL',\n        max_tokens: 500,\n        temperature: 0.2,\n        messages: [{ role: 'user', content }],\n      }\n    }\n  });\n}\n\nif (out.length === 0) {\n  return [{ json: { noBatches: true } }];\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "n-ifbatch",
+      "name": "有待评审包吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3740,
+        -60
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c4",
+              "leftValue": "={{ !$json.noBatches }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-judge",
+      "name": "AI 视觉审美打分",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        -100
+      ],
+      "continueOnFail": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Your httpHeaderAuth"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "http://YOUR-LLM-API-BASE/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.magpiePayload) }}",
+        "options": {
+          "timeout": 45000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n-select",
+      "name": "筛选AI高分精品",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const batches = $('按系列组装AI视觉评审包').all().map(x => x.json).filter(x => !x.noBatches);\nconst aiResponses = $input.all();\n\nconst perSeriesWinners = [];\nconst rejectedKeys = [];\nconst rejectedMd5 = [];\nconst rejectedDims = [];\nlet quota = 24;\nlet bucketSizes = {};\n\nfor (let i = 0; i < Math.min(batches.length, aiResponses.length); i++) {\n  const b = batches[i];\n  if (b.quota) quota = Number(b.quota);\n  if (b.bucketSizes) bucketSizes = b.bucketSizes;\n  const cands = b.candidates || [];\n\n  const resp = aiResponses[i]?.json || {};\n  const rawText = String(resp.choices?.[0]?.message?.content || '').trim();\n  let judgments = [];\n  try {\n    const m = rawText.match(/\\[[\\s\\S]*\\]/);\n    if (m) judgments = JSON.parse(m[0]);\n  } catch (_) {\n    judgments = [];\n  }\n\n  const byIdx = new Map();\n  for (const j of judgments) {\n    if (j && typeof j.idx === 'number') byIdx.set(j.idx, j);\n  }\n\n  const seriesKept = [];\n  for (const c of cands) {\n    const j = byIdx.get(c.idx);\n    const score = j ? Number(j.score || 0) : 0;\n    const keep = Boolean(j && j.keep === true && score >= 8);\n    if (keep) {\n      seriesKept.push({\n        ...c,\n        aiScore: Math.min(10, Math.round(score)),\n        aiReason: String(j.reason || '').slice(0, 40),\n      });\n    } else if (j) {\n      if (c.key) rejectedKeys.push(c.key);\n      if (c.md5) rejectedMd5.push(c.md5);\n      if (c.dimKey) rejectedDims.push(c.dimKey);\n    }\n  }\n\n  seriesKept.sort((a, b) => (b.aiScore - a.aiScore) || (b.communityScore - a.communityScore));\n  const top = seriesKept.slice(0, 3).map(w => {\n    const extMatch = w.downloadUrl.match(/\\.(jpg|jpeg|png|webp)(?:\\?|$)/i);\n    const ext = (extMatch ? extMatch[1].toLowerCase() : 'jpg').replace('jpeg', 'jpg');\n    return {\n      ...w,\n      cleanFilename: `${w.series}_s${w.aiScore}_${w.source}_${w.id}_${w.w}x${w.h}.${ext}`,\n    };\n  });\n  if (top.length) perSeriesWinners.push(top);\n}\n\n// Round-robin across all active themes so every theme in the wave gets fair representation\nconst finalWinners = [];\nfor (let r = 0; r < 3 && finalWinners.length < quota; r++) {\n  for (const list of perSeriesWinners) {\n    if (finalWinners.length >= quota) break;\n    if (list[r]) finalWinners.push(list[r]);\n  }\n}\n\nconst judgedCount = batches.reduce((acc, b) => acc + (b.candidates?.length || 0), 0);\n\nif (finalWinners.length === 0) {\n  return [{\n    json: {\n      noWinners: true,\n      rejectedKeys,\n      rejectedMd5,\n      rejectedDims,\n      bucketSizes,\n      judgedCount,\n    }\n  }];\n}\n\nreturn finalWinners.map((w, idx) => ({\n  json: {\n    ...w,\n    noWinners: false,\n    bucketSizes,\n    rejectedKeys: idx === 0 ? rejectedKeys : [],\n    rejectedMd5: idx === 0 ? rejectedMd5 : [],\n    rejectedDims: idx === 0 ? rejectedDims : [],\n    judgedCount,\n  }\n}));"
+      }
+    },
+    {
+      "id": "n-ifwin",
+      "name": "有高分精品吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4380,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c5",
+              "leftValue": "={{ !$json.noWinners }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-dlfull",
+      "name": "下载高分高清原图",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4600,
+        -140
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.downloadUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 2,
+              "batchInterval": 400
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n-valbin",
+      "name": "校验图片并重命名",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4820,
+        -140
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst valid = [];\n\nfor (const it of items) {\n  const bin = it.binary && it.binary.data;\n  if (!bin) continue;\n  const mime = String(bin.mimeType || '').toLowerCase();\n  if (!mime.startsWith('image/')) continue;\n  let byteLen = Number(bin.bytes || 0);\n  if (!byteLen && typeof bin.data === 'string' && bin.data !== 'filesystem-v2') {\n    byteLen = Math.floor(bin.data.length * 0.75);\n  }\n  if (byteLen > 0 && (byteLen < 80 * 1024 || byteLen > 16 * 1024 * 1024)) continue;\n\n  const cleanName = String(it.json.cleanFilename || bin.fileName || 'wallpaper.jpg');\n  valid.push({\n    json: {\n      series: it.json.series,\n      source: it.json.source,\n      id: it.json.id,\n      key: it.json.key,\n      md5: it.json.md5 || '',\n      dimKey: it.json.dimKey || '',\n      aiScore: it.json.aiScore,\n      aiReason: it.json.aiReason || '',\n      w: it.json.w,\n      h: it.json.h,\n      cleanFilename: cleanName,\n      bucketSizes: it.json.bucketSizes,\n    },\n    binary: {\n      data: {\n        ...bin,\n        fileName: cleanName,\n      }\n    }\n  });\n}\n\nif (valid.length === 0) {\n  return [{ json: { noValidDownloads: true } }];\n}\n\nreturn valid;"
+      }
+    },
+    {
+      "id": "n-ifval",
+      "name": "有有效图片可上传吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5020,
+        -140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c6",
+              "leftValue": "={{ !$json.noValidDownloads }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-upload",
+      "name": "串行上传至图床待审箱",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5240,
+        -180
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "http://imgbed:8080/upload?uploadChannel=cfr2&uploadFolder=wallpapers-inbox&uploadNameType=origin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('解码图床 Token').first().json.token.trim() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 450
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n-fin",
+      "name": "汇总入库结果并更新账本",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5480,
+        80
+      ],
+      "parameters": {
+        "jsCode": "let state = { seenKeys: [], seenMd5: [], seenDims: [], pages: {}, rotWave: 0, lastRun: null };\ntry {\n  const raw = $('解码去重账本').first().json.stateJson || '';\n  if (raw.trim()) state = { ...state, ...JSON.parse(raw) };\n} catch (_) {}\nstate.pages = state.pages || {};\n\nconst seenKeys = new Set(state.seenKeys || []);\nconst seenMd5 = new Set(state.seenMd5 || []);\nconst seenDims = new Set(state.seenDims || []);\n\nlet syncInfo = { needSync: false, approvedCount: 0 };\ntry { syncInfo = $('检查背景同步需求').first().json || syncInfo; } catch (_) {}\n\nlet inboxBefore = 0;\ntry { inboxBefore = ($('查询待审箱列表').first().json.files || []).length; } catch (_) {}\n\nlet bq0 = {};\ntry { bq0 = $('生成多源乐队番搜图清单').first().json || {}; } catch (_) {}\nconst inboxFull = Boolean(bq0.inboxFull);\nconst maxInbox = Number(bq0.maxInbox || 200);\nconst waveIdx = Number.isFinite(Number(bq0.waveIdx)) ? Number(bq0.waveIdx) : 0;\nconst totalWaves = Number(bq0.totalWaves || 4);\nconst activeSeries = Array.isArray(bq0.activeSeries) ? bq0.activeSeries : [];\n\nlet judgedCount = 0;\nlet bucketSizes = null;\ntry {\n  const sel0 = $('筛选AI高分精品').first().json || {};\n  judgedCount = Number(sel0.judgedCount || 0);\n  if (sel0.bucketSizes) bucketSizes = sel0.bucketSizes;\n  for (const k of (sel0.rejectedKeys || [])) seenKeys.add(k);\n  for (const m of (sel0.rejectedMd5 || [])) seenMd5.add(m);\n  for (const d of (sel0.rejectedDims || [])) if (d) seenDims.add(d);\n} catch (_) {}\n\nlet candidates = [];\ntry {\n  candidates = $('校验图片并重命名').all().map(x => x.json).filter(x => !x.noValidDownloads);\n} catch (_) {}\n\nconst SERIES_LABELS = {\n  toplist_month: '全站月榜',\n  toplist_year: '全站年榜',\n  toplist_all: '殿堂收藏',\n  toplist_hot: '全站热图',\n  orig_girl: '原创少女',\n  orig_art: '大师原创',\n  style_dreamy: '唯美花海',\n  style_cool: '酷飒赛博',\n  style_school: '青春校园',\n  style_fantasy: '奇幻华服',\n  mygo: 'MyGO',\n  mujica: 'Mujica',\n  bangdream: '邦邦',\n  bocchi: '孤独摇滚',\n  gbc: 'GBC',\n  lycoris: '莉可丽丝',\n  frieren: '芙莉莲',\n  violet: '紫罗兰',\n  shinkai: '新海诚系',\n  kon: '轻音少女',\n  euphonium: '上低音号',\n  fate: 'Fate',\n  monogatari: '物语',\n  kimetsu: '鬼灭之刃',\n  spyxfamily: '间谍过家家',\n  rezero: 'Re:0',\n  madoka: '小圆',\n  oshi: '我推的孩子',\n  evangelion: 'EVA',\n  yurucamp: '摇曳露营',\n  nier: '尼尔',\n  miku: '初音未来',\n  arknights: '明日方舟',\n  bluearchive: '蔚蓝档案',\n  genshin: '原神',\n  starrail: '星穹铁道',\n  wuthering: '鸣潮',\n  touhou: '东方',\n  azurlane: '碧蓝航线',\n  zzz: '绝区零',\n};\n\nconst uploadOutputs = $input.all();\nconst uploadedBySeries = {};\nconst uploadedBySource = { wallhaven: 0, konachan: 0, yandere: 0 };\nconst highlights = [];\nlet uploadedCount = 0;\n\nif (candidates.length > 0 && uploadOutputs.length > 0) {\n  for (let i = 0; i < Math.min(candidates.length, uploadOutputs.length); i++) {\n    const c = candidates[i];\n    if (c.bucketSizes && !bucketSizes) bucketSizes = c.bucketSizes;\n    const resp = uploadOutputs[i]?.json;\n    const ok = Boolean(\n      (resp && resp.src) ||\n      (Array.isArray(resp) && resp[0] && resp[0].src) ||\n      (resp && resp[0] && resp[0].src)\n    );\n    if (ok) {\n      uploadedCount++;\n      uploadedBySeries[c.series] = (uploadedBySeries[c.series] || 0) + 1;\n      if (uploadedBySource[c.source] !== undefined) uploadedBySource[c.source]++;\n      if (c.key) seenKeys.add(c.key);\n      if (c.md5) seenMd5.add(c.md5);\n      if (c.dimKey) seenDims.add(c.dimKey);\n      if (highlights.length < 6) {\n        const cn = SERIES_LABELS[c.series] || c.series;\n        highlights.push(`${cn} ${c.aiScore}分：${c.aiReason || '高分精选'}`);\n      }\n    }\n  }\n}\n\nlet nextRotWave = waveIdx;\nif (!inboxFull) {\n  if (!bucketSizes) {\n    try { bucketSizes = $('社区高赞硬质检与去重').first().json?.bucketSizes || null; } catch (_) {}\n  }\n  const limits = { wallhaven: 20, konachan: 30, yandere: 30 };\n  for (const se of activeSeries) {\n    for (const so of ['wallhaven', 'konachan', 'yandere']) {\n      const k = `${se}:${so}`;\n      const avail = bucketSizes ? Number(bucketSizes[k] || 0) : 0;\n      const cur = Number.isFinite(Number(state.pages[k])) ? Number(state.pages[k]) : 1;\n      if (avail < 3) {\n        state.pages[k] = cur + 1 > limits[so] ? 1 : cur + 1;\n      } else {\n        state.pages[k] = cur;\n      }\n    }\n  }\n  nextRotWave = (waveIdx + 1) % totalWaves;\n}\n\nconst trimSet = (setObj, maxLen) => {\n  const arr = Array.from(setObj);\n  return arr.length > maxLen ? arr.slice(arr.length - maxLen) : arr;\n};\n\nconst newState = {\n  seenKeys: trimSet(seenKeys, 30000),\n  seenMd5: trimSet(seenMd5, 30000),\n  seenDims: trimSet(seenDims, 30000),\n  pages: state.pages,\n  rotWave: nextRotWave,\n  lastRun: new Date().toISOString(),\n};\n\nconst inboxNow = inboxBefore + uploadedCount;\nconst seriesDetail = activeSeries\n  .filter(k => (uploadedBySeries[k] || 0) > 0)\n  .map(k => `${SERIES_LABELS[k] || k} ${uploadedBySeries[k]}`)\n  .join(' / ') || '无新增';\n\nconst srcDetail = [\n  uploadedBySource.wallhaven ? `Wallhaven ${uploadedBySource.wallhaven}` : '',\n  uploadedBySource.konachan ? `Konachan ${uploadedBySource.konachan}` : '',\n  uploadedBySource.yandere ? `Yande.re ${uploadedBySource.yandere}` : '',\n].filter(Boolean).join(' / ') || '无新增';\n\nconst lines = ['🎨 动漫二次元自动搜图日报', ''];\nif (inboxFull) {\n  lines.push(`⏸ 自动搜图待选箱已满（当前 ${inboxBefore} 张 / 上限 ${maxInbox} 张），本次暂停抓取`);\n} else {\n  lines.push(`• 本次 AI 视觉严选入库：${uploadedCount} 张（从 ${judgedCount} 张高赞候选中筛选 ≥8分）`);\n  lines.push(`• 本轮轮换：第 ${waveIdx + 1}/${totalWaves} 组（${seriesDetail}）`);\n  lines.push(`• 图源分布：${srcDetail}`);\n  lines.push(`• 自动搜图待选箱当前：${inboxNow} 张（上限 ${maxInbox} 张）`);\n}\nlines.push(`• 正式轮播池：${syncInfo.approvedCount} 张（图床背景：${syncInfo.needSync ? '已自动同步' : '已是最新'}）`);\nif (highlights.length) {\n  lines.push('');\n  lines.push('精选点评：');\n  for (const h of highlights) lines.push(`- ${h}`);\n}\nlines.push('');\nlines.push('审核入口：https://YOUR-IMGBED-DOMAIN/dashboard');\nlines.push('进入 自动搜图待选 (wallpapers-inbox)：不要的删除（永久不再抓），当壁纸移入 正式壁纸，想生图点右下角紫色魔法棒一键复制。');\n\nreturn [{\n  json: {\n    payload: JSON.stringify(newState, null, 2),\n    uploadedCount,\n    judgedCount,\n    uploadedBySeries,\n    uploadedBySource,\n    inboxNow,\n    approvedCount: syncInfo.approvedCount,\n    bgSynced: Boolean(syncInfo.needSync),\n    shouldNotify: uploadedCount > 0 || Boolean(syncInfo.needSync) || inboxFull,\n    message: lines.join('\\n'),\n  }\n}];"
+      }
+    },
+    {
+      "id": "n-conv",
+      "name": "转换去重账本为JSON",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        5700,
+        0
+      ],
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "payload",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "mygo-wallpaper-seen.json"
+        }
+      }
+    },
+    {
+      "id": "n-save",
+      "name": "保存去重账本",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        5900,
+        0
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "/home/node/.n8n-files/curated-log/mygo-wallpaper-seen.json",
+        "dataPropertyName": "data",
+        "options": {}
+      }
+    },
+    {
+      "id": "n-ifnot",
+      "name": "需要推TG通知吗",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5700,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c7",
+              "leftValue": "={{ $json.shouldNotify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-tg",
+      "name": "推送 Telegram 壁纸寻图简报",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5920,
+        180
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Your telegramApi"
+        }
+      },
+      "parameters": {
+        "chatId": "={{ $env.TG_CHAT_ID || 'YOUR_TELEGRAM_CHAT_ID' }}",
+        "text": "={{ String($json.message || '').replace(/\\*\\*/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').slice(0, 3900) }}",
+        "additionalFields": {
+          "disable_web_page_preview": true,
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "每天 16:45 自动寻图": {
+      "main": [
+        [
+          {
+            "node": "读取图床 Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "手动立即找图": {
+      "main": [
+        [
+          {
+            "node": "读取图床 Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "读取图床 Token": {
+      "main": [
+        [
+          {
+            "node": "解码图床 Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解码图床 Token": {
+      "main": [
+        [
+          {
+            "node": "读取去重账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "读取去重账本": {
+      "main": [
+        [
+          {
+            "node": "解码去重账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解码去重账本": {
+      "main": [
+        [
+          {
+            "node": "获取正式壁纸池",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取正式壁纸池": {
+      "main": [
+        [
+          {
+            "node": "获取图床页面配置",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取图床页面配置": {
+      "main": [
+        [
+          {
+            "node": "检查背景同步需求",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查背景同步需求": {
+      "main": [
+        [
+          {
+            "node": "需要同步背景吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需要同步背景吗": {
+      "main": [
+        [
+          {
+            "node": "同步图床4端背景",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "查询待审箱列表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "同步图床4端背景": {
+      "main": [
+        [
+          {
+            "node": "查询待审箱列表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询待审箱列表": {
+      "main": [
+        [
+          {
+            "node": "生成多源乐队番搜图清单",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成多源乐队番搜图清单": {
+      "main": [
+        [
+          {
+            "node": "需要抓新图吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需要抓新图吗": {
+      "main": [
+        [
+          {
+            "node": "抓取3路高赞图源",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "汇总入库结果并更新账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓取3路高赞图源": {
+      "main": [
+        [
+          {
+            "node": "社区高赞硬质检与去重",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "社区高赞硬质检与去重": {
+      "main": [
+        [
+          {
+            "node": "有候选图吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有候选图吗": {
+      "main": [
+        [
+          {
+            "node": "下载小缩略图供AI评审",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "汇总入库结果并更新账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下载小缩略图供AI评审": {
+      "main": [
+        [
+          {
+            "node": "按系列组装AI视觉评审包",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "按系列组装AI视觉评审包": {
+      "main": [
+        [
+          {
+            "node": "有待评审包吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有待评审包吗": {
+      "main": [
+        [
+          {
+            "node": "AI 视觉审美打分",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "汇总入库结果并更新账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 视觉审美打分": {
+      "main": [
+        [
+          {
+            "node": "筛选AI高分精品",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "筛选AI高分精品": {
+      "main": [
+        [
+          {
+            "node": "有高分精品吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有高分精品吗": {
+      "main": [
+        [
+          {
+            "node": "下载高分高清原图",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "汇总入库结果并更新账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下载高分高清原图": {
+      "main": [
+        [
+          {
+            "node": "校验图片并重命名",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "校验图片并重命名": {
+      "main": [
+        [
+          {
+            "node": "有有效图片可上传吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有有效图片可上传吗": {
+      "main": [
+        [
+          {
+            "node": "串行上传至图床待审箱",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "汇总入库结果并更新账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "串行上传至图床待审箱": {
+      "main": [
+        [
+          {
+            "node": "汇总入库结果并更新账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "汇总入库结果并更新账本": {
+      "main": [
+        [
+          {
+            "node": "转换去重账本为JSON",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "需要推TG通知吗",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "转换去重账本为JSON": {
+      "main": [
+        [
+          {
+            "node": "保存去重账本",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需要推TG通知吗": {
+      "main": [
+        [
+          {
+            "node": "推送 Telegram 壁纸寻图简报",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Shanghai",
+    "availableInMCP": false,
+    "saveDataSuccessExecution": "none"
+  }
+}

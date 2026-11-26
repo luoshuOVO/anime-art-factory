@@ -1,0 +1,18 @@
+# 严禁提交真实密钥与个人数据
+.env
+.env.*
+!.env.example
+
+# 运行数据、数据库与生成图片
+data/
+studio-data/
+studio-secrets/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.bak*
+*.db
+*.db-wal
+*.db-shm
+.DS_Store

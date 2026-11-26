@@ -1,0 +1,106 @@
+name: anime-art-factory
+
+x-studio: &studio
+  image: ${STUDIO_IMAGE:-ghcr.io/naoya666/colab-comfy-studio:latest}
+  env_file: .env
+  environment:
+    DATABASE_URL: sqlite:////data/studio.db
+    DATA_DIR: /data
+    TZ: ${TZ:-Asia/Shanghai}
+  volumes:
+    - ./studio-data:/data
+    - ./studio-secrets:/run/studio-secrets:ro
+  restart: unless-stopped
+  mem_limit: 384m
+  pids_limit: 128
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  networks:
+    - art-net
+
+services:
+  # ---------- 1. Colab GPU Studio（上游开源出图引擎，AGPL-3.0） ----------
+  colab-comfy-studio:
+    <<: *studio
+    container_name: colab-comfy-studio
+    hostname: colab-comfy-studio
+    mem_limit: 1024m
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${STUDIO_PORT:-29091}:8788"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8788/api/health',timeout=4)"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  colab-comfy-studio-worker:
+    <<: *studio
+    container_name: colab-comfy-studio-worker
+    command: [python, -m, app.worker, worker]
+    depends_on:
+      colab-comfy-studio:
+        condition: service_healthy
+
+  colab-comfy-studio-model-worker:
+    <<: *studio
+    container_name: colab-comfy-studio-model-worker
+    command: [python, -m, app.worker, model-worker]
+    depends_on:
+      colab-comfy-studio:
+        condition: service_healthy
+
+  colab-comfy-studio-watchdog:
+    <<: *studio
+    container_name: colab-comfy-studio-watchdog
+    command: [python, -m, app.worker, watchdog, --interval, "5"]
+    depends_on:
+      colab-comfy-studio:
+        condition: service_healthy
+
+  # ---------- 2. Art Factory（二次元自动化编排 + AI 写词质检 + 科普漫画 + 中文 Web 控制台） ----------
+  art-factory:
+    build: ./art-factory
+    image: anime-art-factory:local
+    container_name: art-factory
+    hostname: art-factory
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      TZ: ${TZ:-Asia/Shanghai}
+      STUDIO_BASE: ${STUDIO_BASE:-http://colab-comfy-studio:8788}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${FACTORY_PORT:-28096}:8096"
+    volumes:
+      - ./data:/data
+    depends_on:
+      colab-comfy-studio:
+        condition: service_healthy
+    networks:
+      - art-net
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8096/health',timeout=4)"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+networks:
+  art-net:
+    driver: bridge

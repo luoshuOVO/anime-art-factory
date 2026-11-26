@@ -1,0 +1,36 @@
+# 可选模块 A：独立图床（CloudFlare-ImgBed）
+# 启动前请先确保核心 docker-compose.yml 已启动（会自动创建 anime-art-factory_art-net 网络）
+# 用法：cp .env.imgbed.example .env.imgbed && docker compose -f docker-compose.imgbed.yml up -d
+
+services:
+  imgbed:
+    image: marseventh/cloudflare-imgbed:2.7.8
+    container_name: imgbed
+    hostname: imgbed
+    restart: unless-stopped
+    env_file:
+      - .env.imgbed
+    ports:
+      - "${IMGBED_BIND_IP:-127.0.0.1}:${IMGBED_PORT:-29093}:8080"
+    volumes:
+      - ./imgbed-data:/app/data
+    networks:
+      - art-net
+    mem_limit: 1g
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  art-net:
+    external: true
+    name: anime-art-factory_art-net
