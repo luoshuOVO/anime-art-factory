@@ -2,11 +2,13 @@
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # 运行数据、数据库与生成图片
 data/
 studio-data/
 studio-secrets/
+imgbed-data/
 
 # Python 缓存
 __pycache__/
